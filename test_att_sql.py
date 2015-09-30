@@ -175,7 +175,7 @@ def get_files():
                         )
                 ) roots
                 where roots.fileid = att.fileid
-                and att.filename like '%.doc%'"""
+                and att.filename not like '%.doc%'"""
         cur.execute(query)
         files = []
 
@@ -216,110 +216,129 @@ def get_x_request_digest(auth):
 
     """
     Extract X-RequestDigest value from site."""
-    url = "/".join([get_api_url(), "contextinfo"])
-    headers = {
-            "accept": "application/json;odata=verbose"
-        }
-    response = requests.post(
-        url=url,
-        auth=auth,
-        headers=headers)
-    print(response.status_code)
-    return response.json()['d']['GetContextWebInformation']['FormDigestValue']
+    try:
+        url = "/".join([get_api_url(), "contextinfo"])
+        headers = {
+                "accept": "application/json;odata=verbose"
+            }
+        response = requests.post(
+            url=url,
+            auth=auth,
+            headers=headers)
+        print(response.status_code)
+        return response.json()['d']['GetContextWebInformation']['FormDigestValue']
+    except Exception, e:
+        print(response.json())
+        raise e
 
 
 def upload_binary(auth, xrd, library, folder, filename, file_data):
 
     """
     Upload binary file data to Sharepoint document library."""
-    response = requests.post(
-        url="/".join([
-            get_api_url(), "web",
-            "GetFolderByServerRelativeUrl('%s/%s')",
-            "files",
-            "add(url='%s',overwrite=true)"
-        ]) % (library, folder, filename),
-        auth=auth,
-        headers={
-            "accept": "application/json;odata=verbose",
-            "content-type": "application/x-www-urlencoded; charset=UTF-8",
-            "content-length": len(file_data),
-            "X-RequestDigest": xrd
-        },
-        data=file_data)
-    print(response.status_code)
-    return response.json()['d']['ListItemAllFields']['__deferred']['uri']
+    try:
+        response = requests.post(
+            url="/".join([
+                get_api_url(), "web",
+                "GetFolderByServerRelativeUrl('%s/%s')",
+                "files",
+                "add(url='%s',overwrite=true)"
+            ]) % (library, folder, filename),
+            auth=auth,
+            headers={
+                "accept": "application/json;odata=verbose",
+                "content-type": "application/x-www-urlencoded; charset=UTF-8",
+                "content-length": len(file_data),
+                "X-RequestDigest": xrd
+            },
+            data=file_data)
+        print(response.status_code)
+        return response.json()['d']['ListItemAllFields']['__deferred']['uri']
+    except Exception, e:
+        print(response.json())
+        raise e
 
 
 def create_folder(auth, xrd, library, folder):
 
     """
     Create sub-folder."""
-    data = """
-        {'__metadata': {'type': 'SP.Folder'},
-        'ServerRelativeUrl': '%s/%s'}""" % (library, folder)
+    try:
+        data = """
+            {'__metadata': {'type': 'SP.Folder'},
+            'ServerRelativeUrl': '%s/%s'}""" % (library, folder)
 
-    response = requests.post(
-        url="/".join([get_api_url(), "web", "folders"]),
-        auth=auth,
-        headers={
-            "accept": "application/json;odata=verbose",
-            "content-type": "application/json;odata=verbose",
-            "content-length": len(data),
-            "X-RequestDigest": xrd
-        },
-        data=data)
-    print(response.status_code)
+        response = requests.post(
+            url="/".join([get_api_url(), "web", "folders"]),
+            auth=auth,
+            headers={
+                "accept": "application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "content-length": len(data),
+                "X-RequestDigest": xrd
+            },
+            data=data)
+        print(response.status_code)
+    except Exception, e:
+        print(response.json())
+        raise e
 
 
 def get_item_metadata(auth, item_fields_uri):
 
     """
     Extract item uri, etag, and list item type."""
-    response = requests.get(
-        url=item_fields_uri,
-        auth=auth,
-        headers={
-            "accept": "application/json;odata=verbose"
-        }
-    )
-    list_resp = response.json()
-    print(response.status_code)
-    #pprint.pprint(response.json())
+    try:
+        response = requests.get(
+            url=item_fields_uri,
+            auth=auth,
+            headers={
+                "accept": "application/json;odata=verbose"
+            }
+        )
+        list_resp = response.json()
+        print(response.status_code)
 
-    return {
-        'uri': list_resp['d']['__metadata']['uri'],
-        'etag': list_resp['d']['__metadata']['etag'],
-        'type': list_resp['d']['__metadata']['type']
-    }
+        return {
+            'uri': list_resp['d']['__metadata']['uri'],
+            'etag': list_resp['d']['__metadata']['etag'],
+            'type': list_resp['d']['__metadata']['type']
+        }
+    except Exception, e:
+        print(response.json())
+        raise e
 
 
 def update_file_item(auth, xrd, item_metadata, item_data):
 
     """
     Update the non-document fields for an item."""
-    data = """
-        {'__metadata': {'type': '%s'},
-         'fileid': '%s',
-         'modkey': '%s',
-         'description0': '%s'}""" % (
-            item_metadata['type'],
-            item_data['fileid'],
-            "_".join([item_data['modulecd'], item_data['keyid']]),
-            item_data['description'])
+    try:
+        data = """
+            {'__metadata': {'type': '%s'},
+             'fileid': '%s',
+             'modkey': '%s',
+             'description0': '%s'}""" % (
+                item_metadata['type'],
+                item_data['fileid'],
+                "_".join([item_data['modulecd'], item_data['keyid']]),
+                item_data['description'])
 
-    response = requests.post(
-        url=item_metadata['uri'],
-        auth=auth,
-        headers={
-            "accept": "application/json;odata=verbose",
-            "content-type": "application/json;odata=verbose",
-            "X-HTTP-Method": "MERGE",
-            "If-Match": item_metadata['etag'],
-            "X-RequestDigest": xrd
-        },
-        data=data)
-    print(response.status_code)
+        response = requests.post(
+            url=item_metadata['uri'],
+            auth=auth,
+            headers={
+                "accept": "application/json;odata=verbose",
+                "content-type": "application/json;odata=verbose",
+                "X-HTTP-Method": "MERGE",
+                "If-Match": item_metadata['etag'],
+                "X-RequestDigest": xrd
+            },
+            data=data)
+        print(response.status_code)
+    except Exception, e:
+        print(response.json())
+        raise e
 
 
 def get_test_files():
@@ -347,17 +366,16 @@ def main():
 
     library = 'Action_Request_Test'
     auth = get_auth()
-    xrd = get_x_request_digest(auth)
+    # xrd = get_x_request_digest(auth)
     files = get_files()
     #files = get_test_files()
     folders = []
-    match = re.compile("[\&\'\"\/\\\:\<\>]")
+    #match = re.compile("[\&\'\"\/\\\:\<\>]")
     bad_filename_match = re.compile(
         "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=]")
     double_dot_match = re.compile("\.{2,}")
 
     for file in files:
-        #pprint.pprint(file)
         try:
             xrd = get_x_request_digest(auth)
             if file['rootid']:
@@ -366,22 +384,22 @@ def main():
                 folder = "_".join([file['modulecd'], file['keyid']])
             if folder not in folders:
                 create_folder(auth, xrd, library, folder)
-                #os.mkdir(os.path.join('files', folder))
                 folders.append(folder)
             if file['dataisstoredyn'] == 'Y':
                 filename = bad_filename_match.sub('-', file['filename'])
                 filename = double_dot_match.sub('.', filename)
+                filename = filename[-127:] if len(filename) > 127 else filename
                 file_data = file['data']
             else:
                 filename = "".join(
-                    file['filename'].split(".")[:-1] if "." in file['filename'] else file['filename'])
+                    file['filename'].split(".")[:-1] if "." in file[
+                        'filename'] else file['filename'])
                 filename = bad_filename_match.sub(
                     '-', re.split('[\\\/]', filename)[-1])
                 filename = ".".join([filename, 'txt'])
+                filename = filename[-127:] if len(filename) > 127 else filename
                 file_data = file['filename'].encode('utf-8')
             print(folder, filename, file['dataisstoredyn'])
-            # with open(os.path.join('files', folder, filename), 'wb') as out_file:
-            #     out_file.write(file_data)
             item_fields_uri = upload_binary(
                 auth, xrd, library, folder, filename, file_data)
             item_metadata = get_item_metadata(auth, item_fields_uri)
