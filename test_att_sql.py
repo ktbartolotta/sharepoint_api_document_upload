@@ -14,9 +14,9 @@ def get_files():
 
     try:
         cnn_str = ";".join([
-                "Driver={SQL Server}", "Server=WIN-DBFM-G-100\\INST05",
-                "Trusted_Connection=yes", "database=Impact"
-            ])
+            "Driver={SQL Server}", "Server=WIN-DBFM-G-100\\INST05",
+            "Trusted_Connection=yes", "database=Impact"
+        ])
         cnn = pyodbc.connect(cnn_str)
         cur = cnn.cursor()
         query = """
@@ -45,7 +45,7 @@ def get_files():
                 h as  (
                 select b.ai_id, c.ai_id rootid, c.type rootcd, b.lvl, b.bc
                 from  q b
-                    left join (
+                    inner join (
                         select a.*
                         from q a
                         where a.ai_parentai_id is null
@@ -53,8 +53,8 @@ def get_files():
                         on b.bc = c.bc
                 )
                 select att.fileid, att.modulecd, att.keyid, roots.rootcd, roots.rootid, att.filename, att.description, att.data, att.dataisstoredyn
-                from  impact.dbo.ppl_vw_talen_attachments att, 
-                    (
+                from  impact.dbo.ppl_vw_talen_attachments att
+                    left join (
                         (
                             select att_ai1.fileid, att_ai1.modulecd, att_ai1.keyid, ai1.ai_source_modulecd rootcd, ai1.ai_sourcekeyno rootid
                             from impact.dbo.ppl_vw_talen_attachments att_ai1
@@ -173,25 +173,27 @@ def get_files():
                                     on inv2.iv_id = att_iv2.keyid
                             where att_iv2.modulecd = 'IV' and inv2.in_id is not null
                         )
-                ) roots
-                where roots.fileid = att.fileid
-                and att.filename not like '%.doc%'"""
+                    ) roots
+                        on roots.fileid = att.fileid
+                where att.filename like '%.doc%'
+                    and att.filename not like
+                        '%http://myccats/Impact/enterprise/review%'"""
         cur.execute(query)
         files = []
 
         for r in cur:
             files.append({
-                    'fileid': unicode(r[0]),
-                    'modulecd': unicode(r[1]),
-                    'keyid': unicode(r[2]),
-                    'rootcd': unicode(r[3]),
-                    'rootid': unicode(r[4]),
-                    'filename': r[5].encode('utf-8').decode('ascii', 'ignore'),
-                    'description': r[6].encode('utf-8').decode('ascii', 'ignore')
-                    if r[6] else 'No description.',
-                    'data': r[7],
-                    'dataisstoredyn': unicode(r[8])
-                })
+                'fileid': unicode(r[0]),
+                'modulecd': unicode(r[1]),
+                'keyid': unicode(r[2]),
+                'rootcd': unicode(r[3]),
+                'rootid': unicode(r[4]),
+                'filename': r[5].encode('utf-8').decode('ascii', 'ignore'),
+                'description': r[6].encode('utf-8').decode('ascii', 'ignore')
+                if r[6] else 'No description.',
+                'data': r[7],
+                'dataisstoredyn': unicode(r[8])
+            })
         cur.close()
         cnn.close()
     except:
@@ -213,19 +215,18 @@ def get_api_url():
 
 
 def get_x_request_digest(auth):
-
     """
     Extract X-RequestDigest value from site."""
     try:
         url = "/".join([get_api_url(), "contextinfo"])
         headers = {
-                "accept": "application/json;odata=verbose"
-            }
+            "accept": "application/json;odata=verbose"
+        }
         response = requests.post(
             url=url,
             auth=auth,
             headers=headers)
-        print(response.status_code)
+        print('X-RequestDigest:  %s' % response.status_code)
         return response.json()['d']['GetContextWebInformation']['FormDigestValue']
     except Exception, e:
         print(response.json())
@@ -233,7 +234,6 @@ def get_x_request_digest(auth):
 
 
 def upload_binary(auth, xrd, library, folder, filename, file_data):
-
     """
     Upload binary file data to Sharepoint document library."""
     try:
@@ -252,7 +252,10 @@ def upload_binary(auth, xrd, library, folder, filename, file_data):
                 "X-RequestDigest": xrd
             },
             data=file_data)
-        print(response.status_code)
+        print('Upload:  %s' % response.status_code)
+        if '20' not in response.status_code:
+            print('Retrying connection')
+            upload_binary(auth, xrd, library, folder, filename, file_data)
         return response.json()['d']['ListItemAllFields']['__deferred']['uri']
     except Exception, e:
         print(response.json())
@@ -260,7 +263,6 @@ def upload_binary(auth, xrd, library, folder, filename, file_data):
 
 
 def create_folder(auth, xrd, library, folder):
-
     """
     Create sub-folder."""
     try:
@@ -278,14 +280,13 @@ def create_folder(auth, xrd, library, folder):
                 "X-RequestDigest": xrd
             },
             data=data)
-        print(response.status_code)
+        print('Create Folder:  %s' % response.status_code)
     except Exception, e:
         print(response.json())
         raise e
 
 
 def get_item_metadata(auth, item_fields_uri):
-
     """
     Extract item uri, etag, and list item type."""
     try:
@@ -297,7 +298,7 @@ def get_item_metadata(auth, item_fields_uri):
             }
         )
         list_resp = response.json()
-        print(response.status_code)
+        print('Metadata:  %s' % response.status_code)
 
         return {
             'uri': list_resp['d']['__metadata']['uri'],
@@ -310,7 +311,6 @@ def get_item_metadata(auth, item_fields_uri):
 
 
 def update_file_item(auth, xrd, item_metadata, item_data):
-
     """
     Update the non-document fields for an item."""
     try:
@@ -319,10 +319,10 @@ def update_file_item(auth, xrd, item_metadata, item_data):
              'fileid': '%s',
              'modkey': '%s',
              'description0': '%s'}""" % (
-                item_metadata['type'],
-                item_data['fileid'],
-                "_".join([item_data['modulecd'], item_data['keyid']]),
-                item_data['description'])
+            item_metadata['type'],
+            item_data['fileid'],
+            "_".join([item_data['modulecd'], item_data['keyid']]),
+            item_data['description'])
 
         response = requests.post(
             url=item_metadata['uri'],
@@ -335,7 +335,10 @@ def update_file_item(auth, xrd, item_metadata, item_data):
                 "X-RequestDigest": xrd
             },
             data=data)
-        print(response.status_code)
+        print('Update:  %s' % response.status_code)
+        if '20' not in response.status_code:
+            print('Retrying connection')
+            update_file_item(auth, xrd, item_metadata, item_data)
     except Exception, e:
         print(response.json())
         raise e
@@ -366,11 +369,9 @@ def main():
 
     library = 'Action_Request_Test'
     auth = get_auth()
-    # xrd = get_x_request_digest(auth)
     files = get_files()
     #files = get_test_files()
     folders = []
-    #match = re.compile("[\&\'\"\/\\\:\<\>]")
     bad_filename_match = re.compile(
         "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=]")
     double_dot_match = re.compile("\.{2,}")
