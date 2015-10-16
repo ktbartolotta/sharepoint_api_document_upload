@@ -1,3 +1,4 @@
+cx-Oracle==5.2
 pymssql==2.1.1
 pyodbc==3.0.10
 python-ntlm3==1.0.2

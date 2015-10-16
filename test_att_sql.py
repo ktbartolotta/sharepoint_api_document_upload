@@ -1,4 +1,5 @@
 import pyodbc
+import cx_Oracle
 import pprint
 import requests
 import getpass
@@ -6,6 +7,7 @@ import traceback
 import sys
 import re
 import os
+import datetime
 
 from requests_ntlm import HttpNtlmAuth
 from collections import namedtuple
@@ -22,14 +24,14 @@ AttMetadata = namedtuple(
 def get_ai_attachments_query():
 
     query = """
-        with q as 
+        with q as
         (
-            select a.ai_id, a.ai_parentai_id, type, facility, module_status, module_date, 
+            select a.ai_id, a.ai_parentai_id, type, facility, module_status, module_date,
                 0 as Lvl, cast(row_number() over (order by a.ai_id) as varchar(MAX)) as bc
             from (
-                select fn_id as ai_id, 'IS' as type, oshasite facility, statusds module_status, 
+                select fn_id as ai_id, 'IS' as type, oshasite facility, statusds module_status,
                     fn_assigneddt module_date, null as ai_parentai_id
-                from impact.dbo.ppl_vw_talen_finding 
+                from impact.dbo.ppl_vw_talen_finding
                 where fn_id in (
                     select ai_parentai_id
                     from impact.dbo.ppl_vw_talen_actionitem
@@ -58,13 +60,13 @@ def get_ai_attachments_query():
             ) c
                 on b.bc = c.bc
         )
-        select att.fileid, att.keyid, att.modulecd, roots.rootcd, roots.rootid, att.filename, att.description, 
+        select att.fileid, att.keyid, att.modulecd, roots.rootcd, roots.rootid, att.filename, att.description,
             att.data, att.dataisstoredyn, roots.is_restricted, roots.facility facility, roots.module_status, roots.module_date
         from  impact.dbo.ppl_vw_talen_attachments att
             left join (
                 -- AI
                 (
-                    select att_ai1.fileid, att_ai1.modulecd, att_ai1.keyid, ai1.ai_source_modulecd rootcd, ai1.ai_sourcekeyno rootid, 
+                    select att_ai1.fileid, att_ai1.modulecd, att_ai1.keyid, ai1.ai_source_modulecd rootcd, ai1.ai_sourcekeyno rootid,
                         'N' is_restricted, ai1.oshasiteds facility, ai1.statusds module_status, ai1.ai_createddt module_date
                     from impact.dbo.ppl_vw_talen_attachments att_ai1
                         inner join impact.dbo.ppl_vw_talen_actionitem ai1
@@ -90,7 +92,7 @@ def get_ai_attachments_query():
                             ai4.facility, ai4.module_status, ai4.module_date
                         from impact.dbo.ppl_vw_talen_attachments att_ai4
                             inner join (
-                                select h1.ai_id, h1.rootcd, h1.rootid, f1.oshasite facility, 
+                                select h1.ai_id, h1.rootcd, h1.rootid, f1.oshasite facility,
                                     h1.module_status, h1.module_date
                                 from h h1
                                     inner join impact.dbo.ppl_vw_talen_finding f1
@@ -108,7 +110,7 @@ def get_ai_attachments_query():
                         where att_ai4.modulecd = 'AI'
                     )
                     union
-                    select att_ai9.fileid, att_ai9.modulecd, att_ai9.keyid, att_ai9.modulecd rootcd, att_ai9.keyid rootid, 
+                    select att_ai9.fileid, att_ai9.modulecd, att_ai9.keyid, att_ai9.modulecd rootcd, att_ai9.keyid rootid,
                         'N' is_restricted, ai9.oshasiteds facility, ai9.statusds module_status, ai9.ai_createddt module_date
                     from impact.dbo.ppl_vw_talen_attachments att_ai9
                         inner join impact.dbo.ppl_vw_talen_actionitem ai9
@@ -118,7 +120,8 @@ def get_ai_attachments_query():
             ) roots
                 on roots.fileid = att.fileid
         where att.filename not like '%http://myccats/Impact/enterprise/review%'
-            and att.modulecd = 'AI'"""
+            and att.modulecd = 'AI'
+            and roots.rootid is null"""
 
 
     return query
@@ -127,7 +130,7 @@ def get_ai_attachments_query():
 def get_non_ai_attachments_query():
 
     query = """
-        select att.fileid, att.keyid, att.modulecd, roots.rootcd, roots.rootid, att.filename, att.description, 
+        select att.fileid, att.keyid, att.modulecd, roots.rootcd, roots.rootid, att.filename, att.description,
             att.data, att.dataisstoredyn, roots.is_restricted, roots.facility facility, roots.module_status, roots.module_date
         from  impact.dbo.ppl_vw_talen_attachments att
             left join (
@@ -155,7 +158,7 @@ def get_non_ai_attachments_query():
                             on fnd1.fn_id = att_fn1.keyid
                     where att_fn1.modulecd = 'IS' and fnd1.fn_sourcekeyno is null
                     union
-                    select att_fn2.fileid, att_fn2.modulecd, att_fn2.keyid, fnd2.fn_source_modulecd rootcd, fnd2.fn_sourcekeyno rootid, 
+                    select att_fn2.fileid, att_fn2.modulecd, att_fn2.keyid, fnd2.fn_source_modulecd rootcd, fnd2.fn_sourcekeyno rootid,
                         'N' is_restricted, fnd2.oshasite facility, fnd2.statusds module_status, fnd2.fn_assigneddt module_date
                     from impact.dbo.ppl_vw_talen_attachments att_fn2
                         inner join impact.dbo.ppl_vw_talen_finding fnd2
@@ -164,7 +167,7 @@ def get_non_ai_attachments_query():
                 )
                 union
                 select att_ve.fileid, att_ve.modulecd, att_ve.keyid, 'IN' rootcd, veh.in_id rootid, 'N' is_restricted,
-                    veh.regionds facility, veh.statusds module_status, null module_date
+                    veh.regionds facility, veh.statusds module_status,  veh.createddt module_date
                 from impact.dbo.ppl_vw_talen_attachments att_ve
                     inner join impact.dbo.ppl_vw_talen_vehicle veh
                         on veh.ve_id = att_ve.keyid
@@ -177,7 +180,7 @@ def get_non_ai_attachments_query():
                         on gen.qe_id = att_qe.keyid
                 where att_qe.modulecd = 'QE'
                 union
-                select att_me.fileid, att_me.modulecd, att_me.keyid, 
+                select att_me.fileid, att_me.modulecd, att_me.keyid,
                     case when med.in_id is null then att_me.modulecd else 'IN' end rootcd,
                     case when med.in_id is null then att_me.keyid else med.in_id end rootid, 'Y' is_restricted,
                     med.oshasite facility, med.statusds module_status, med.incidentdt module_date
@@ -218,7 +221,8 @@ def get_non_ai_attachments_query():
             ) roots
                 on roots.fileid = att.fileid
         where att.filename not like '%http://myccats/Impact/enterprise/review%'
-            and att.modulecd != 'AI'"""
+            and att.modulecd != 'AI'
+            and roots.rootid is null"""
 
     return query
 
@@ -235,6 +239,7 @@ def get_attachments(query):
         cur = cnn.cursor()
         cur.execute(query)
         for rec in cur:
+            print(unicode(rec[12]))
             yield AttMetadata(
                 fileid=unicode(rec[0]),
                 modulecd=unicode(rec[1]),
@@ -250,13 +255,19 @@ def get_attachments(query):
                 is_restricted=unicode(rec[9]),
                 facility=unicode(rec[10]),
                 module_status=unicode(rec[11]),
-                module_date=unicode(rec[12])
+                module_date=unicode(rec[12]).split()[0]
+                if rec[12] else unicode(rec[12])
             )
     except:
         traceback.print_exc(file=sys.stdout)
     finally:
         cur.close()
         cnn.close()
+
+
+def get_AR_CCATS_root_map():
+
+
 
 
 def get_auth():
@@ -358,7 +369,7 @@ def update_file_item(auth, xrd, item_metadata, item_data):
              'rootkey': '%s',
              'facility': '%s',
              'modulestatus': '%s',
-             'moduledate' % '%s'}""" % (
+             'moduledate': '%s'}""" % (
                 item_metadata['type'],
                 item_data.fileid,
                 "_".join([item_data.modulecd, item_data.keyid]),
@@ -395,7 +406,6 @@ def get_test_files():
 
     with open('this_thing.txt', 'rb') as file:
         data = file.read()
-
     return [AttMetadata(
         fileid=u'123',
         modulecd=u'AI',
@@ -409,14 +419,25 @@ def get_test_files():
         is_restricted=u'N',
         facility=u'1234 A Facility',
         module_status=u'Closed',
-        module_date=u'2008-06-16 00:00:00.000'
+        module_date=u''
     )]
 
 
 def process_attachments(auth, file):
     """
     Insert attachment files and metadata into a Sharepoint site."""
-    library = 'Action_Request_Test'
+    if file.is_restricted == 'Y':
+        if file.module_status != 'Closed' or file.module_date > '2015':
+            library = 'AR_RESTRICTED'
+        else:
+            library = 'AR_RESTRICTED_HISTORICAL'
+    elif file.is_restricted == 'N':
+        if file.module_status != 'Closed' or file.module_date > '2015':
+            library = 'Action_Request_Test'
+        else:
+            library = 'AR_Historical'
+    else:
+        library = 'Action_Request_Test'
     bad_filename_match = re.compile(
         "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=\{\}]")
     double_dot_match = re.compile("\.{2,}")
@@ -444,10 +465,12 @@ def main():
 
     auth = get_auth()
     try:
-        # for file in get_attachments(get_ai_attachments_query()):
-        #     process_attachments(auth, file)
-        for file in get_test_files():
+        for file in get_attachments(get_non_ai_attachments_query()):
             process_attachments(auth, file)
+        for file in get_attachments(get_ai_attachments_query()):
+            process_attachments(auth, file)
+        # for file in get_test_files():
+        #     process_attachments(auth, file)
     except:
         traceback.print_exc(file=sys.stdout)
 
