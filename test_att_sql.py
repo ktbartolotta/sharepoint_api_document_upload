@@ -6,8 +6,6 @@ import getpass
 import traceback
 import sys
 import re
-import os
-import datetime
 
 from requests_ntlm import HttpNtlmAuth
 from collections import namedtuple
@@ -60,7 +58,7 @@ def get_ai_attachments_query():
             ) c
                 on b.bc = c.bc
         )
-        select att.fileid, att.keyid, att.modulecd, roots.rootcd, roots.rootid, att.filename, att.description,
+        select att.fileid, att.modulecd, att.keyid, roots.rootcd, roots.rootid, att.filename, att.description,
             att.data, att.dataisstoredyn, roots.is_restricted, roots.facility facility, roots.module_status, roots.module_date
         from  impact.dbo.ppl_vw_talen_attachments att
             left join (
@@ -120,8 +118,7 @@ def get_ai_attachments_query():
             ) roots
                 on roots.fileid = att.fileid
         where att.filename not like '%http://myccats/Impact/enterprise/review%'
-            and att.modulecd = 'AI'
-            and roots.rootid is null"""
+            and att.modulecd = 'AI'"""
 
 
     return query
@@ -130,7 +127,7 @@ def get_ai_attachments_query():
 def get_non_ai_attachments_query():
 
     query = """
-        select att.fileid, att.keyid, att.modulecd, roots.rootcd, roots.rootid, att.filename, att.description,
+        select att.fileid, att.modulecd, att.keyid, roots.rootcd, roots.rootid, att.filename, att.description,
             att.data, att.dataisstoredyn, roots.is_restricted, roots.facility facility, roots.module_status, roots.module_date
         from  impact.dbo.ppl_vw_talen_attachments att
             left join (
@@ -221,8 +218,7 @@ def get_non_ai_attachments_query():
             ) roots
                 on roots.fileid = att.fileid
         where att.filename not like '%http://myccats/Impact/enterprise/review%'
-            and att.modulecd != 'AI'
-            and roots.rootid is null"""
+            and att.modulecd != 'AI'"""
 
     return query
 
@@ -265,9 +261,40 @@ def get_attachments(query):
         cnn.close()
 
 
+def memoize(f):
+
+    memo = []
+
+    def h():
+
+        if len(memo) == 0:
+            memo.append(f())
+        return memo[0]
+    return h
+
+
+@memoize
 def get_AR_CCATS_root_map():
 
-
+    try:
+        cnn = cx_Oracle.connect('readonly', 'Max1mo', 'gs1d')
+        cur = cnn.cursor()
+        recs = cur.execute(
+            """
+            select trim(leading '0' from old_key) oldkey,
+                trim(leading '0' from new_key) new_key
+            from tidldkey
+            where table_id = 'TIDARMST'"""
+        )
+        AR_root_map = {}
+        for rec in recs:
+            AR_root_map[unicode(rec[0]).strip()] = unicode(rec[1].strip())
+    except:
+        traceback.print_exc(file=sys.stdout)
+    finally:
+        cur.close()
+        cnn.close()
+        return AR_root_map
 
 
 def get_auth():
@@ -360,6 +387,12 @@ def update_file_item(auth, xrd, item_metadata, item_data):
     """
     Update the metadata fields for an item."""
     try:
+        AR_map = get_AR_CCATS_root_map()
+        ar_number = AR_map.get(item_data.rootid)
+        if ar_number:
+            rootkey = ar_number
+        else:
+            rootkey = "_".join([item_data.rootcd, item_data.rootid])
         bad_desc_match = re.compile("[\'\"\\\/]")
         data = """
             {'__metadata': {'type': '%s'},
@@ -374,7 +407,8 @@ def update_file_item(auth, xrd, item_metadata, item_data):
                 item_data.fileid,
                 "_".join([item_data.modulecd, item_data.keyid]),
                 bad_desc_match.sub('_', item_data.description.strip()),
-                "_".join([item_data.rootcd, item_data.rootid]),
+                #"_".join([item_data.rootcd, item_data.rootid]),
+                rootkey,
                 item_data.facility,
                 item_data.module_status,
                 item_data.module_date
@@ -423,35 +457,90 @@ def get_test_files():
     )]
 
 
-def process_attachments(auth, file):
+def get_library(is_restricted, module_status, module_date):
     """
-    Insert attachment files and metadata into a Sharepoint site."""
-    if file.is_restricted == 'Y':
-        if file.module_status != 'Closed' or file.module_date > '2015':
+    Determine into which library the attachment should be inserted."""
+    if is_restricted == 'Y':
+        if module_status != 'Closed' or module_date > '2015':
             library = 'AR_RESTRICTED'
         else:
             library = 'AR_RESTRICTED_HISTORICAL'
-    elif file.is_restricted == 'N':
-        if file.module_status != 'Closed' or file.module_date > '2015':
+    elif is_restricted == 'N':
+        if module_status != 'Closed' or module_date > '2015':
             library = 'Action_Request_Test'
         else:
             library = 'AR_Historical'
     else:
         library = 'Action_Request_Test'
+    return library
+
+
+# def build_file_name_and_data(data_is_stored, filename, data):
+#     """
+#     Build file name based on whether the attachment is an actual file
+#     or a link"""
+#     bad_filename_match = re.compile(
+#         "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=\{\}]")
+#     double_dot_match = re.compile("\.{2,}")
+#     file_name = bad_filename_match.sub('_', filename)
+#     file_name = double_dot_match.sub('.', filename)
+#     if data_is_stored == 'Y':
+#         file_data = data
+#     else:
+#         file_name = ".".join([filename, 'txt'])
+#         file_data = filename.encode('utf-8')
+#     file_name = filename[-110:] if len(filename) > 110 else filename
+#     file_name = "_".join([file.rootcd, file.rootid, filename])
+#     return (file_name, file_data)
+
+
+def build_file_name(file):
+    """
+    Build file name based on whether the attachment is an actual file
+    or a link"""
     bad_filename_match = re.compile(
         "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=\{\}]")
     double_dot_match = re.compile("\.{2,}")
+    file_name = bad_filename_match.sub('_', file.filename)
+    file_name = double_dot_match.sub('.', file_name)
+    if file.dataisstoredyn == 'N':
+        file_name = ".".join([file_name, 'txt'])
+    file_name = file_name[-110:] if len(file_name) > 110 else file_name
+    file_name = "_".join([file.rootcd, file.rootid, file_name])
+    return file_name
+
+
+def build_file_data(file):
+    """
+    Build file data based on whether the attachment is an actual file
+    or link."""
+    if file.dataisstoredyn == 'N':
+        return file.filename.encode('utf-8')
+    else:
+        return file.data
+
+
+def process_attachments(auth, file):
+    """
+    Insert attachment files and metadata into a Sharepoint site."""
+    library = get_library(
+        file.is_restricted, file.module_status, file.module_date)
+    # bad_filename_match = re.compile(
+    #     "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=\{\}]")
+    # double_dot_match = re.compile("\.{2,}")
     try:
         xrd = get_x_request_digest(auth)
-        filename = bad_filename_match.sub('_', file.filename)
-        filename = double_dot_match.sub('.', filename)
-        if file.dataisstoredyn == 'Y':
-            file_data = file.data
-        else:
-            filename = ".".join([filename, 'txt'])
-            file_data = file.filename.encode('utf-8')
-        filename = filename[-110:] if len(filename) > 110 else filename
-        filename = "_".join([file.rootcd, file.rootid, filename])
+        # filename = bad_filename_match.sub('_', file.filename)
+        # filename = double_dot_match.sub('.', filename)
+        # if file.dataisstoredyn == 'Y':
+        #     file_data = file.data
+        # else:
+        #     filename = ".".join([filename, 'txt'])
+        #     file_data = file.filename.encode('utf-8')
+        # filename = filename[-110:] if len(filename) > 110 else filename
+        # filename = "_".join([file.rootcd, file.rootid, filename])
+        filename = build_file_name(file)
+        file_data = build_file_data(file)
         print(filename, file.description)
         item_fields_uri = upload_binary(
             auth, xrd, library, filename, file_data)
@@ -467,8 +556,8 @@ def main():
     try:
         for file in get_attachments(get_non_ai_attachments_query()):
             process_attachments(auth, file)
-        for file in get_attachments(get_ai_attachments_query()):
-            process_attachments(auth, file)
+        # for file in get_attachments(get_ai_attachments_query()):
+        #     process_attachments(auth, file)
         # for file in get_test_files():
         #     process_attachments(auth, file)
     except:
