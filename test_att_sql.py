@@ -6,6 +6,7 @@ import getpass
 import traceback
 import sys
 import re
+import csv
 
 from requests_ntlm import HttpNtlmAuth
 from collections import namedtuple
@@ -234,9 +235,9 @@ def get_attachments(query):
         cnn = pyodbc.connect(cnn_str)
         cur = cnn.cursor()
         cur.execute(query)
+        attachments = []
         for rec in cur:
-            print(unicode(rec[12]))
-            yield AttMetadata(
+            attachments.append(AttMetadata(
                 fileid=unicode(rec[0]),
                 modulecd=unicode(rec[1]),
                 keyid=unicode(rec[2]),
@@ -253,12 +254,13 @@ def get_attachments(query):
                 module_status=unicode(rec[11]),
                 module_date=unicode(rec[12]).split()[0]
                 if rec[12] else unicode(rec[12])
-            )
+            ))
     except:
         traceback.print_exc(file=sys.stdout)
     finally:
         cur.close()
         cnn.close()
+        return attachments
 
 
 def memoize(f):
@@ -281,14 +283,17 @@ def get_AR_CCATS_root_map():
         cur = cnn.cursor()
         recs = cur.execute(
             """
-            select trim(leading '0' from old_key) oldkey,
+            select trim(reference_table) reference_key,
+                trim(leading '0' from old_key) oldkey,
                 trim(leading '0' from new_key) new_key
             from tidldkey
             where table_id = 'TIDARMST'"""
         )
         AR_root_map = {}
         for rec in recs:
-            AR_root_map[unicode(rec[0]).strip()] = unicode(rec[1].strip())
+            AR_root_map[
+                "_".join(['IN',
+                         unicode(rec[1]).strip()])] = unicode(rec[2].strip())
     except:
         traceback.print_exc(file=sys.stdout)
     finally:
@@ -306,9 +311,14 @@ def get_auth():
     return HttpNtlmAuth("PPL\\%s" % user_name, password)
 
 
-def get_api_url():
+def get_test_api_url():
 
     return "http://engagesites.ppl.com/energysupply/gtspc/_api"
+
+
+def get_api_url():
+
+    return "http://engagesites.ppl.com/talen/ActionTrkgSupt/_api"
 
 
 def get_x_request_digest(auth):
@@ -350,9 +360,6 @@ def upload_binary(auth, xrd, library, filename, file_data):
             },
             data=file_data)
         print('Upload:  %s' % response.status_code)
-        if '20' not in str(response.status_code):
-            print('Retrying connection')
-            upload_binary(auth, xrd, library, filename, file_data)
         return response.json()['d']['ListItemAllFields']['__deferred']['uri']
     except Exception, e:
         print(response.json())
@@ -383,16 +390,10 @@ def get_item_metadata(auth, item_fields_uri):
         raise e
 
 
-def update_file_item(auth, xrd, item_metadata, item_data):
+def update_file_item(auth, xrd, item_metadata, item_data, root_key):
     """
     Update the metadata fields for an item."""
     try:
-        AR_map = get_AR_CCATS_root_map()
-        ar_number = AR_map.get(item_data.rootid)
-        if ar_number:
-            rootkey = ar_number
-        else:
-            rootkey = "_".join([item_data.rootcd, item_data.rootid])
         bad_desc_match = re.compile("[\'\"\\\/]")
         data = """
             {'__metadata': {'type': '%s'},
@@ -407,8 +408,7 @@ def update_file_item(auth, xrd, item_metadata, item_data):
                 item_data.fileid,
                 "_".join([item_data.modulecd, item_data.keyid]),
                 bad_desc_match.sub('_', item_data.description.strip()),
-                #"_".join([item_data.rootcd, item_data.rootid]),
-                rootkey,
+                root_key,
                 item_data.facility,
                 item_data.module_status,
                 item_data.module_date
@@ -426,11 +426,6 @@ def update_file_item(auth, xrd, item_metadata, item_data):
             },
             data=data)
         print('Update:  %s' % response.status_code)
-        if '20' not in str(response.status_code):
-            print(data)
-            pprint.pprint(response.json())
-            print('Retrying connection')
-            update_file_item(auth, xrd, item_metadata, item_data)
     except Exception, e:
         print(response.json())
         raise e
@@ -445,28 +440,43 @@ def get_test_files():
         modulecd=u'AI',
         keyid=u'321',
         rootcd=u'IN',
-        rootid=u'567',
+        rootid=u'1111',
         filename=u'<file>G:\\this\\that\\thing\\derr',
         description=u'this is a thing, yo.',
         data=data,
         dataisstoredyn=u'N',
-        is_restricted=u'N',
+        is_restricted=u'Y',
         facility=u'1234 A Facility',
         module_status=u'Closed',
         module_date=u''
     )]
 
 
-def get_library(is_restricted, module_status, module_date):
+@memoize
+def test_get_AR_CCATS_root_map():
+
+    AR_root_map = {}
+    with open('AR_root_map.csv') as csv_file:
+        for r in csv.DictReader(csv_file):
+            AR_root_map[
+                "_".join([
+                    unicode(r['reference_key']).strip(),
+                    unicode(r['old_key']).strip()])
+            ] = unicode(r['new_key'].strip())
+    return AR_root_map
+
+
+def get_test_library(file, root_key):
     """
     Determine into which library the attachment should be inserted."""
-    if is_restricted == 'Y':
-        if module_status != 'Closed' or module_date > '2015':
+    is_ar_number = re.match(r'^\d+$', root_key)
+    if file.is_restricted == 'Y':
+        if is_ar_number:
             library = 'AR_RESTRICTED'
         else:
             library = 'AR_RESTRICTED_HISTORICAL'
-    elif is_restricted == 'N':
-        if module_status != 'Closed' or module_date > '2015':
+    elif file.is_restricted == 'N':
+        if is_ar_number:
             library = 'Action_Request_Test'
         else:
             library = 'AR_Historical'
@@ -475,23 +485,23 @@ def get_library(is_restricted, module_status, module_date):
     return library
 
 
-# def build_file_name_and_data(data_is_stored, filename, data):
-#     """
-#     Build file name based on whether the attachment is an actual file
-#     or a link"""
-#     bad_filename_match = re.compile(
-#         "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=\{\}]")
-#     double_dot_match = re.compile("\.{2,}")
-#     file_name = bad_filename_match.sub('_', filename)
-#     file_name = double_dot_match.sub('.', filename)
-#     if data_is_stored == 'Y':
-#         file_data = data
-#     else:
-#         file_name = ".".join([filename, 'txt'])
-#         file_data = filename.encode('utf-8')
-#     file_name = filename[-110:] if len(filename) > 110 else filename
-#     file_name = "_".join([file.rootcd, file.rootid, filename])
-#     return (file_name, file_data)
+def get_library(file, root_key):
+    """
+    Determine into which library the attachment should be inserted."""
+    is_ar_number = re.match(r'^\d+$', root_key)
+    if file.is_restricted == 'Y':
+        if is_ar_number:
+            library = 'AttachmentsCurrentRestricted'
+        else:
+            library = 'AttachmentsHistoricalRestricted'
+    elif file.is_restricted == 'N':
+        if is_ar_number:
+            library = 'AttachmentsCurrentUnrestricted'
+        else:
+            library = 'AttachmentsHistoricalUnrestricted'
+    else:
+        library = 'AttachmentsHistoricalUnrestricted'
+    return library
 
 
 def build_file_name(file):
@@ -520,32 +530,32 @@ def build_file_data(file):
         return file.data
 
 
+def build_root_key(file):
+    """
+    Use the LDKEY table from Asset Suite to map an Action Tracking number if
+    one exists to the attachment."""
+    root_key = "_".join([file.rootcd, file.rootid])
+    ar_number = test_get_AR_CCATS_root_map().get(root_key)
+    if ar_number:
+        return ar_number
+    else:
+        return root_key
+
+
 def process_attachments(auth, file):
     """
     Insert attachment files and metadata into a Sharepoint site."""
-    library = get_library(
-        file.is_restricted, file.module_status, file.module_date)
-    # bad_filename_match = re.compile(
-    #     "[\&\'\"\/\\\:\<\>\*\[\]\;\?\|\#\~\$\=\{\}]")
-    # double_dot_match = re.compile("\.{2,}")
     try:
         xrd = get_x_request_digest(auth)
-        # filename = bad_filename_match.sub('_', file.filename)
-        # filename = double_dot_match.sub('.', filename)
-        # if file.dataisstoredyn == 'Y':
-        #     file_data = file.data
-        # else:
-        #     filename = ".".join([filename, 'txt'])
-        #     file_data = file.filename.encode('utf-8')
-        # filename = filename[-110:] if len(filename) > 110 else filename
-        # filename = "_".join([file.rootcd, file.rootid, filename])
         filename = build_file_name(file)
         file_data = build_file_data(file)
+        root_key = build_root_key(file)
+        library = get_library(file, root_key)
         print(filename, file.description)
         item_fields_uri = upload_binary(
             auth, xrd, library, filename, file_data)
         item_metadata = get_item_metadata(auth, item_fields_uri)
-        update_file_item(auth, xrd, item_metadata, file)
+        update_file_item(auth, xrd, item_metadata, file, root_key)
     except Exception, e:
         raise e
 
@@ -556,8 +566,8 @@ def main():
     try:
         for file in get_attachments(get_non_ai_attachments_query()):
             process_attachments(auth, file)
-        # for file in get_attachments(get_ai_attachments_query()):
-        #     process_attachments(auth, file)
+        for file in get_attachments(get_ai_attachments_query()):
+            process_attachments(auth, file)
         # for file in get_test_files():
         #     process_attachments(auth, file)
     except:
