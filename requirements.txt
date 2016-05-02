@@ -1,6 +1,8 @@
 cx-Oracle==5.2
-pymssql==2.1.1
+Mako==1.0.3
+MarkupSafe==0.23
 pyodbc==3.0.10
+python-editor==0.4
 python-ntlm3==1.0.2
 requests==2.7.0
 requests-ntlm==0.1.0
