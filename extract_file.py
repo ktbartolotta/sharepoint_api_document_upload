@@ -13,7 +13,7 @@ def main():
     password = getpass.getpass("password:")
     auth = HttpNtlmAuth("PPL\\%s" % user_name, password)
 
-    api_url = "http://engagesites.ppl.com/energysupply/gtspc/_api"
+    api_url = "http://domain/site/subsite/_api"
 
     """
     Extract X-RequestDigest value from site."""
@@ -30,7 +30,7 @@ def main():
 
     try:
         cnn_str = ";".join([
-                "Driver={SQL Server}", "Server=WIN-DBFM-G-100\\INST05",
+                "Driver={SQL Server}", "Server=SOME-WINDOWS-SERVER\\STUFF",
                 "Trusted_Connection=yes", "database=Impact"
             ])
         cnn = pyodbc.connect(cnn_str)
