@@ -19,8 +19,8 @@ def main():
     Extract X-RequestDigest value from site."""
     url = "/".join([api_url, "contextinfo"])
     headers = {
-            "accept": "application/json;odata=verbose"
-        }
+        "accept": "application/json;odata=verbose"
+    }
     n = requests.post(
         url=url,
         auth=auth,
@@ -30,9 +30,9 @@ def main():
 
     try:
         cnn_str = ";".join([
-                "Driver={SQL Server}", "Server=SOME-WINDOWS-SERVER\\STUFF",
-                "Trusted_Connection=yes", "database=Impact"
-            ])
+            "Driver={SQL Server}", "Server=SOME-WINDOWS-SERVER\\STUFF",
+            "Trusted_Connection=yes", "database=Impact"
+        ])
         cnn = pyodbc.connect(cnn_str)
         cur = cnn.cursor()
         query = """
@@ -44,17 +44,17 @@ def main():
         for r in cur:
             try:
                 url = "/".join([
-                        api_url, "web",
-                        "GetFolderByServerRelativeUrl('%s')",
-                        "files", "add(url='%s',overwrite=true)"
-                    ]) % ("ar_docs_test", r[0])
+                    api_url, "web",
+                    "GetFolderByServerRelativeUrl('%s')",
+                    "files", "add(url='%s',overwrite=true)"
+                ]) % ("ar_docs_test", r[0])
                 headers = {
-                        "accept": "application/json;odata=verbose",
-                        "content-type":
-                        "application/x-www-urlencoded; charset=UTF-8",
-                        "content-length": len(r[1]),
-                        "X-RequestDigest": xrd
-                    }
+                    "accept": "application/json;odata=verbose",
+                    "content-type":
+                    "application/x-www-urlencoded; charset=UTF-8",
+                    "content-length": len(r[1]),
+                    "X-RequestDigest": xrd
+                }
                 t = requests.post(
                     url=url,
                     auth=auth,
